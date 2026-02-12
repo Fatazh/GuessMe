@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { techItems, shuffleArray, TechItem } from '@/data/techItems';
 import Image from 'next/image';
@@ -25,7 +25,7 @@ interface GroupScore {
     correct: number;
 }
 
-type Phase = 'ready' | 'playing' | 'summary' | 'gameOver';
+type Phase = 'ready' | 'playing' | 'summary' | 'tiebreaker' | 'tiebreakerReady' | 'tiebreakerPlaying' | 'tiebreakerSummary' | 'gameOver';
 
 export default function GamePage() {
     const router = useRouter();
@@ -42,6 +42,13 @@ export default function GamePage() {
     const [imgError, setImgError] = useState(false);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const scoresRef = useRef<GroupScore[]>([]);
+    const [answeredIds, setAnsweredIds] = useState<Set<number>>(new Set()); // IDs yang sudah dijawab benar
+
+    // Tiebreaker state
+    const [tiedGroups, setTiedGroups] = useState<number[]>([]); // indices of tied groups
+    const [tiebreakerIdx, setTiebreakerIdx] = useState(0); // current tiebreaker group index
+    const [tiebreakerScores, setTiebreakerScores] = useState<Record<number, number>>({}); // extra scores
+    const [tiebreakerRound, setTiebreakerRound] = useState(1);
 
     useEffect(() => {
         scoresRef.current = scores;
@@ -55,7 +62,6 @@ export default function GamePage() {
             return;
         }
         const parsed = JSON.parse(saved);
-        // Validate config has the new groups format
         if (!parsed.groups || !Array.isArray(parsed.groups)) {
             localStorage.removeItem('gameConfig');
             router.push('/');
@@ -77,14 +83,18 @@ export default function GamePage() {
         );
     }, [router]);
 
-    // Timer
+    // Timer - works for both normal and tiebreaker playing phases
     useEffect(() => {
-        if (phase !== 'playing') return;
+        if (phase !== 'playing' && phase !== 'tiebreakerPlaying') return;
         timerRef.current = setInterval(() => {
             setTimeLeft((prev) => {
                 if (prev <= 1) {
                     clearInterval(timerRef.current!);
-                    setPhase('summary');
+                    if (phase === 'playing') {
+                        setPhase('summary');
+                    } else {
+                        setPhase('tiebreakerSummary');
+                    }
                     return 0;
                 }
                 return prev - 1;
@@ -97,25 +107,58 @@ export default function GamePage() {
 
     // Out of items
     useEffect(() => {
-        if (phase === 'playing' && itemIdx >= items.length) {
+        if ((phase === 'playing' || phase === 'tiebreakerPlaying') && itemIdx >= items.length) {
             if (timerRef.current) clearInterval(timerRef.current);
-            setPhase('summary');
+            if (phase === 'playing') {
+                setPhase('summary');
+            } else {
+                setPhase('tiebreakerSummary');
+            }
         }
     }, [phase, itemIdx, items.length]);
 
+    // Check for ties
+    const findTiedGroups = useCallback((currentScores: GroupScore[]): number[] => {
+        const maxScore = Math.max(...currentScores.map((s) => s.correct));
+        const tiedIndices = currentScores
+            .map((s, i) => (s.correct === maxScore ? i : -1))
+            .filter((i) => i !== -1);
+        return tiedIndices.length > 1 ? tiedIndices : [];
+    }, []);
+
     const startTurn = useCallback(() => {
+        // Shuffle items and remove already-answered ones
+        const available = shuffleArray(techItems.filter((item) => !answeredIds.has(item.id)));
+        setItems(available);
+        setItemIdx(0);
         setTimeLeft(totalTime);
         setCorrectInTurn(0);
         setFlashType(null);
         setImgError(false);
         setPhase('playing');
-    }, [totalTime]);
+    }, [totalTime, answeredIds]);
 
     const handleCorrect = useCallback(() => {
         if (itemIdx >= items.length) return;
-        setScores((prev) =>
-            prev.map((s, i) => (i === groupIdx ? { ...s, correct: s.correct + 1 } : s))
-        );
+
+        // Track answered item
+        const answeredItem = items[itemIdx];
+        setAnsweredIds((prev) => new Set(prev).add(answeredItem.id));
+
+        if (phase === 'tiebreakerPlaying') {
+            // Tiebreaker scoring
+            const currentGroupOrigIdx = tiedGroups[tiebreakerIdx];
+            setTiebreakerScores((prev) => ({
+                ...prev,
+                [currentGroupOrigIdx]: (prev[currentGroupOrigIdx] || 0) + 1,
+            }));
+        } else {
+            // Normal scoring
+            setScores((prev) =>
+                prev.map((s, i) => (i === groupIdx ? { ...s, correct: s.correct + 1 } : s))
+            );
+        }
+
         setCorrectInTurn((p) => p + 1);
         setFlashType('correct');
         setTimeout(() => {
@@ -123,7 +166,7 @@ export default function GamePage() {
             setFlashType(null);
             setImgError(false);
         }, 300);
-    }, [itemIdx, items.length, groupIdx]);
+    }, [itemIdx, items, groupIdx, phase, tiedGroups, tiebreakerIdx]);
 
     const handleSkip = useCallback(() => {
         if (itemIdx >= items.length) return;
@@ -138,14 +181,89 @@ export default function GamePage() {
     const nextGroup = useCallback(() => {
         const next = groupIdx + 1;
         if (next >= (config?.groups.length || 0)) {
-            localStorage.setItem('gameResults', JSON.stringify(scoresRef.current));
-            setPhase('gameOver');
-            setTimeout(() => router.push('/result'), 1200);
+            // All groups done, check for tie
+            const tied = findTiedGroups(scoresRef.current);
+            if (tied.length > 1) {
+                // TIEBREAKER!
+                setTiedGroups(tied);
+                setTiebreakerIdx(0);
+                setTiebreakerScores({});
+                setTiebreakerRound(1);
+                // Reshuffle items for tiebreaker, exclude answered
+                setItems(shuffleArray(techItems.filter((item) => !answeredIds.has(item.id))));
+                setItemIdx(0);
+                setPhase('tiebreaker');
+            } else {
+                localStorage.setItem('gameResults', JSON.stringify(scoresRef.current));
+                setPhase('gameOver');
+                setTimeout(() => router.push('/result'), 1200);
+            }
         } else {
             setGroupIdx(next);
             setPhase('ready');
         }
-    }, [groupIdx, config, router]);
+    }, [groupIdx, config, router, findTiedGroups]);
+
+    // Start tiebreaker turn
+    const startTiebreakerTurn = useCallback(() => {
+        const available = shuffleArray(techItems.filter((item) => !answeredIds.has(item.id)));
+        setItems(available);
+        setItemIdx(0);
+        const tiebreakerTime = 30; // 30 seconds for tiebreaker
+        setTimeLeft(tiebreakerTime);
+        setTotalTime(tiebreakerTime);
+        setCorrectInTurn(0);
+        setFlashType(null);
+        setImgError(false);
+        setPhase('tiebreakerPlaying');
+    }, [answeredIds]);
+
+    // Next tiebreaker group
+    const nextTiebreakerGroup = useCallback(() => {
+        const next = tiebreakerIdx + 1;
+        if (next >= tiedGroups.length) {
+            // All tied groups played, check if still tied
+            const tbScores = { ...tiebreakerScores };
+            // Fill missing scores with 0
+            tiedGroups.forEach((gi) => {
+                if (tbScores[gi] === undefined) tbScores[gi] = 0;
+            });
+
+            const maxTbScore = Math.max(...Object.values(tbScores));
+            const stillTied = tiedGroups.filter((gi) => (tbScores[gi] || 0) === maxTbScore);
+
+            if (stillTied.length > 1 && tiebreakerRound < 3) {
+                // Still tied - another round!
+                setTiedGroups(stillTied);
+                setTiebreakerIdx(0);
+                setTiebreakerScores({});
+                setTiebreakerRound((r) => r + 1);
+                setItems(shuffleArray(techItems.filter((item) => !answeredIds.has(item.id))));
+                setItemIdx(0);
+                setPhase('tiebreaker');
+            } else {
+                // Resolve: add tiebreaker scores to main scores, or just declare winner
+                const finalScores = scoresRef.current.map((s, i) => ({
+                    ...s,
+                    correct: s.correct + (tbScores[i] || 0),
+                }));
+                localStorage.setItem('gameResults', JSON.stringify(finalScores));
+                setPhase('gameOver');
+                setTimeout(() => router.push('/result'), 1200);
+            }
+        } else {
+            setTiebreakerIdx(next);
+            setPhase('tiebreakerReady');
+        }
+    }, [tiebreakerIdx, tiedGroups, tiebreakerScores, tiebreakerRound, router]);
+
+    // Determine current active group based on phase
+    const activeGroupIdx = useMemo(() => {
+        if (phase === 'tiebreakerReady' || phase === 'tiebreakerPlaying' || phase === 'tiebreakerSummary') {
+            return tiedGroups[tiebreakerIdx] ?? 0;
+        }
+        return groupIdx;
+    }, [phase, groupIdx, tiedGroups, tiebreakerIdx]);
 
     if (!config) {
         return (
@@ -155,7 +273,7 @@ export default function GamePage() {
         );
     }
 
-    const currentGroup = scores[groupIdx];
+    const currentGroup = scores[activeGroupIdx];
     const currentItem: TechItem | null = itemIdx < items.length ? items[itemIdx] : null;
 
     const minutes = Math.floor(timeLeft / 60);
@@ -176,12 +294,17 @@ export default function GamePage() {
     // Top scores for topbar
     const topScores = [...scores].sort((a, b) => b.correct - a.correct);
 
+    // Is currently in tiebreaker modes?
+    const isTiebreaker = phase === 'tiebreaker' || phase === 'tiebreakerReady' || phase === 'tiebreakerPlaying' || phase === 'tiebreakerSummary';
+
     return (
         <main className="game-page">
             {/* Top Bar */}
             <div className="game-topbar">
                 <div className="round-badge" style={{ borderColor: currentGroup?.color }}>
-                    Kelompok {groupIdx + 1} / {config.groups.length}
+                    {isTiebreaker
+                        ? `⚡ Extra Ronde ${tiebreakerRound}`
+                        : `Kelompok ${groupIdx + 1} / ${config.groups.length}`}
                 </div>
                 <div className="top-scores">
                     {topScores
@@ -198,7 +321,67 @@ export default function GamePage() {
                 </div>
             </div>
 
-            {/* ===== READY PHASE ===== */}
+            {/* ===== TIEBREAKER ANNOUNCEMENT ===== */}
+            {phase === 'tiebreaker' && (
+                <div className="ready-card glass-card tiebreaker-announce">
+                    <div className="ready-icon">⚡</div>
+                    <h2 className="tiebreaker-title">Game Extra!</h2>
+                    <p className="tiebreaker-desc">
+                        Skor seri! Kelompok berikut punya nilai yang sama:
+                    </p>
+                    <div className="tied-groups-list">
+                        {tiedGroups.map((gi) => (
+                            <div
+                                key={gi}
+                                className="tied-group-chip"
+                                style={{ background: `${scores[gi].color}22`, color: scores[gi].color, borderColor: scores[gi].color }}
+                            >
+                                {scores[gi].name} — {scores[gi].correct} benar
+                            </div>
+                        ))}
+                    </div>
+                    <p className="tiebreaker-rules">
+                        Setiap kelompok punya <strong>30 detik</strong> untuk menebak sebanyak mungkin.
+                        <br />
+                        Kelompok dengan jawaban terbanyak menang! 🏆
+                    </p>
+                    <button
+                        className="start-turn-btn tiebreaker-start"
+                        onClick={() => {
+                            setPhase('tiebreakerReady');
+                        }}
+                    >
+                        ⚡ Mulai Game Extra
+                    </button>
+                </div>
+            )}
+
+            {/* ===== TIEBREAKER READY ===== */}
+            {phase === 'tiebreakerReady' && currentGroup && (
+                <div className="ready-card glass-card">
+                    <div className="ready-icon">⚡</div>
+                    <div className="ready-order">
+                        Extra Ronde {tiebreakerRound} — Kelompok {tiebreakerIdx + 1} dari {tiedGroups.length}
+                    </div>
+                    <h2 style={{ background: currentGroup.gradient, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+                        {currentGroup.name}
+                    </h2>
+
+                    <p className="ready-instructions">
+                        <strong>30 detik</strong> untuk menebak sebanyak mungkin!
+                        <br /><br />
+                        Ini babak penentuan — berikan yang terbaik! 💪
+                    </p>
+                    <div className="warning-box">
+                        🚫 Penebak jangan lihat layar dulu!
+                    </div>
+                    <button id="start-turn" className="start-turn-btn tiebreaker-start" onClick={startTiebreakerTurn}>
+                        ⚡ Mulai Giliran
+                    </button>
+                </div>
+            )}
+
+            {/* ===== READY PHASE (Normal) ===== */}
             {phase === 'ready' && currentGroup && (
                 <div className="ready-card glass-card">
                     <div className="ready-icon">🎯</div>
@@ -225,13 +408,14 @@ export default function GamePage() {
                 </div>
             )}
 
-            {/* ===== PLAYING PHASE ===== */}
-            {phase === 'playing' && (
+            {/* ===== PLAYING PHASE (Normal + Tiebreaker) ===== */}
+            {(phase === 'playing' || phase === 'tiebreakerPlaying') && (
                 <>
                     {/* Stats bar */}
                     <div className="game-stats-bar">
                         <div className="current-player" style={{ color: currentGroup?.color }}>
-                            🎯 <strong>{currentGroup?.name}</strong>
+                            {isTiebreaker ? '⚡' : '🎯'} <strong>{currentGroup?.name}</strong>
+                            {isTiebreaker && <span className="tiebreaker-badge-small">EXTRA</span>}
                         </div>
                         <div className="correct-count">✅ {correctInTurn} benar</div>
                     </div>
@@ -272,8 +456,8 @@ export default function GamePage() {
                                     <Image
                                         src={currentItem.image}
                                         alt={currentItem.name}
-                                        width={200}
-                                        height={200}
+                                        width={380}
+                                        height={380}
                                         className="tech-image"
                                         onError={() => setImgError(true)}
                                         unoptimized
@@ -288,16 +472,7 @@ export default function GamePage() {
 
                             <div className="tech-name">{currentItem.name}</div>
 
-                            <div className="taboo-section">
-                                <div className="taboo-title">🚫 Kata Terlarang</div>
-                                <div className="taboo-words">
-                                    {currentItem.tabooWords.map((word, i) => (
-                                        <span key={i} className="taboo-word">
-                                            {word}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
+
                         </div>
                     ) : (
                         <div className="tech-card">
@@ -332,7 +507,7 @@ export default function GamePage() {
                 </>
             )}
 
-            {/* ===== SUMMARY PHASE ===== */}
+            {/* ===== SUMMARY PHASE (Normal) ===== */}
             {phase === 'summary' && (
                 <div className="turn-summary">
                     <div className="summary-icon">⏰</div>
@@ -350,8 +525,32 @@ export default function GamePage() {
 
                     <button id="next-player" className="next-btn" onClick={nextGroup}>
                         {groupIdx + 1 >= config.groups.length
-                            ? '🏆 Lihat Hasil Akhir'
+                            ? '🏁 Lihat Hasil'
                             : `➡️ Kelompok Berikutnya (${config.groups[groupIdx + 1].name})`}
+                    </button>
+                </div>
+            )}
+
+            {/* ===== TIEBREAKER SUMMARY ===== */}
+            {phase === 'tiebreakerSummary' && (
+                <div className="turn-summary">
+                    <div className="summary-icon">⚡</div>
+                    <h2>Waktu Habis!</h2>
+                    <div className="summary-sub">
+                        Extra ronde <span style={{ color: currentGroup?.color, fontWeight: 700 }}>{currentGroup?.name}</span> selesai
+                    </div>
+
+                    <div className="summary-stats">
+                        <div className="stat-item">
+                            <div className="stat-value correct">{correctInTurn}</div>
+                            <div className="stat-label">Benar (Extra)</div>
+                        </div>
+                    </div>
+
+                    <button id="next-tiebreaker" className="next-btn tiebreaker-start" onClick={nextTiebreakerGroup}>
+                        {tiebreakerIdx + 1 >= tiedGroups.length
+                            ? '🏆 Lihat Hasil Akhir'
+                            : `⚡ Kelompok Berikutnya (${scores[tiedGroups[tiebreakerIdx + 1]].name})`}
                     </button>
                 </div>
             )}

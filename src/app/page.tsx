@@ -73,16 +73,16 @@ export default function Home() {
               id="timer-slider"
               type="range"
               className="timer-slider"
-              min={30}
-              max={180}
-              step={15}
+              min={60}
+              max={300}
+              step={30}
               value={timerSeconds}
               onChange={(e) => setTimerSeconds(Number(e.target.value))}
             />
             <div className="timer-labels">
-              <span>30 detik</span>
+              <span>1 menit</span>
               <span>{formatTimer(timerSeconds)}</span>
-              <span>3 menit</span>
+              <span>5 menit</span>
             </div>
           </div>
         </div>
