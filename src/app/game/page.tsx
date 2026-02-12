@@ -40,6 +40,7 @@ export default function GamePage() {
     const [correctInTurn, setCorrectInTurn] = useState(0);
     const [flashType, setFlashType] = useState<'correct' | 'skip' | null>(null);
     const [imgError, setImgError] = useState(false);
+    const [paused, setPaused] = useState(false);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const scoresRef = useRef<GroupScore[]>([]);
     const [answeredIds, setAnsweredIds] = useState<Set<number>>(new Set()); // IDs yang sudah dijawab benar
@@ -83,9 +84,13 @@ export default function GamePage() {
         );
     }, [router]);
 
-    // Timer - works for both normal and tiebreaker playing phases
+    // Timer - works for both normal and tiebreaker playing phases, pauses when paused
     useEffect(() => {
         if (phase !== 'playing' && phase !== 'tiebreakerPlaying') return;
+        if (paused) {
+            if (timerRef.current) clearInterval(timerRef.current);
+            return;
+        }
         timerRef.current = setInterval(() => {
             setTimeLeft((prev) => {
                 if (prev <= 1) {
@@ -103,7 +108,7 @@ export default function GamePage() {
         return () => {
             if (timerRef.current) clearInterval(timerRef.current);
         };
-    }, [phase]);
+    }, [phase, paused]);
 
     // Out of items
     useEffect(() => {
@@ -135,8 +140,25 @@ export default function GamePage() {
         setCorrectInTurn(0);
         setFlashType(null);
         setImgError(false);
+        setPaused(false);
         setPhase('playing');
     }, [totalTime, answeredIds]);
+
+    // Pause / Resume
+    const togglePause = useCallback(() => {
+        setPaused((prev) => !prev);
+    }, []);
+
+    // Stop - end current turn immediately
+    const handleStop = useCallback(() => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        setPaused(false);
+        if (phase === 'tiebreakerPlaying') {
+            setPhase('tiebreakerSummary');
+        } else {
+            setPhase('summary');
+        }
+    }, [phase]);
 
     const handleCorrect = useCallback(() => {
         if (itemIdx >= items.length) return;
@@ -215,6 +237,7 @@ export default function GamePage() {
         setCorrectInTurn(0);
         setFlashType(null);
         setImgError(false);
+        setPaused(false);
         setPhase('tiebreakerPlaying');
     }, [answeredIds]);
 
@@ -426,82 +449,121 @@ export default function GamePage() {
                             <svg width="120" height="120" viewBox="0 0 120 120">
                                 <circle className="timer-circle-bg" cx="60" cy="60" r={radius} />
                                 <circle
-                                    className="timer-circle-progress"
+                                    className={`timer-circle-progress ${paused ? 'paused' : ''}`}
                                     cx="60"
                                     cy="60"
                                     r={radius}
-                                    stroke={isLow ? 'var(--red)' : currentGroup?.color || 'var(--cyan)'}
+                                    stroke={paused ? 'var(--amber)' : isLow ? 'var(--red)' : currentGroup?.color || 'var(--cyan)'}
                                     strokeDasharray={circumference}
                                     strokeDashoffset={dashOffset}
                                 />
                             </svg>
-                            <div className={`timer-text ${isLow ? 'low' : ''}`}>
-                                {String(minutes).padStart(2, '0')}:{String(seconds).padStart(2, '0')}
+                            <div className={`timer-text ${isLow && !paused ? 'low' : ''} ${paused ? 'paused-text' : ''}`}>
+                                {paused ? '⏸️' : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`}
                             </div>
                         </div>
                     </div>
 
-                    {/* Tech Item Card */}
-                    {currentItem ? (
-                        <div
-                            className={`tech-card ${flashType === 'correct' ? 'flash-correct' : ''} ${flashType === 'skip' ? 'flash-skip' : ''}`}
-                            key={currentItem.id}
-                        >
-                            <div className={`tech-category ${categoryClass(currentItem.category)}`}>
-                                {currentItem.category}
-                            </div>
-
-                            <div className="tech-image-container">
-                                {!imgError ? (
-                                    <Image
-                                        src={currentItem.image}
-                                        alt={currentItem.name}
-                                        width={380}
-                                        height={380}
-                                        className="tech-image"
-                                        onError={() => setImgError(true)}
-                                        unoptimized
-                                    />
-                                ) : (
-                                    <div className="tech-image-placeholder">
-                                        <span>📷</span>
-                                        <small>Gambar belum tersedia</small>
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="tech-name">{currentItem.name}</div>
-
-
-                        </div>
-                    ) : (
-                        <div className="tech-card">
-                            <div className="tech-image-placeholder">
-                                <span>🎉</span>
-                            </div>
-                            <div className="tech-name" style={{ fontSize: '1.2rem' }}>
-                                Semua soal habis!
+                    {/* Pause Overlay */}
+                    {paused && (
+                        <div className="pause-overlay">
+                            <div className="pause-content">
+                                <div className="pause-icon">⏸️</div>
+                                <h2 className="pause-title">Game Di-Pause</h2>
+                                <p className="pause-desc">Waktu dihentikan sementara. Tekan Lanjutkan untuk melanjutkan permainan.</p>
+                                <div className="pause-actions">
+                                    <button className="action-btn btn-resume" onClick={togglePause}>
+                                        ▶️ Lanjutkan
+                                    </button>
+                                    <button className="action-btn btn-stop" onClick={handleStop}>
+                                        ⏹️ Akhiri Giliran
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     )}
 
+                    {/* Tech Item Card */}
+                    {!paused && (
+                        <>
+                            {currentItem ? (
+                                <div
+                                    className={`tech-card ${flashType === 'correct' ? 'flash-correct' : ''} ${flashType === 'skip' ? 'flash-skip' : ''}`}
+                                    key={currentItem.id}
+                                >
+                                    <div className={`tech-category ${categoryClass(currentItem.category)}`}>
+                                        {currentItem.category}
+                                    </div>
+
+                                    <div className="tech-image-container">
+                                        {!imgError ? (
+                                            <Image
+                                                src={currentItem.image}
+                                                alt={currentItem.name}
+                                                width={380}
+                                                height={380}
+                                                className="tech-image"
+                                                onError={() => setImgError(true)}
+                                                unoptimized
+                                            />
+                                        ) : (
+                                            <div className="tech-image-placeholder">
+                                                <span>📷</span>
+                                                <small>Gambar belum tersedia</small>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="tech-name">{currentItem.name}</div>
+                                </div>
+                            ) : (
+                                <div className="tech-card">
+                                    <div className="tech-image-placeholder">
+                                        <span>🎉</span>
+                                    </div>
+                                    <div className="tech-name" style={{ fontSize: '1.2rem' }}>
+                                        Semua soal habis!
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    )}
+
                     {/* Actions */}
-                    <div className="game-actions">
+                    {!paused && (
+                        <div className="game-actions">
+                            <button
+                                id="btn-correct"
+                                className="action-btn btn-correct"
+                                onClick={handleCorrect}
+                                disabled={!currentItem}
+                            >
+                                ✅ Benar
+                            </button>
+                            <button
+                                id="btn-skip"
+                                className="action-btn btn-skip"
+                                onClick={handleSkip}
+                                disabled={!currentItem}
+                            >
+                                ⏭️ Lewati
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Pause/Stop Controls */}
+                    <div className="game-controls">
                         <button
-                            id="btn-correct"
-                            className="action-btn btn-correct"
-                            onClick={handleCorrect}
-                            disabled={!currentItem}
+                            className={`control-btn ${paused ? 'btn-resume-small' : 'btn-pause'}`}
+                            onClick={togglePause}
                         >
-                            ✅ Benar
+                            {paused ? '▶️ Lanjut' : '⏸️ Pause'}
                         </button>
                         <button
-                            id="btn-skip"
-                            className="action-btn btn-skip"
-                            onClick={handleSkip}
-                            disabled={!currentItem}
+                            className="control-btn btn-stop-small"
+                            onClick={handleStop}
                         >
-                            ⏭️ Lewati
+                            ⏹️ Stop
                         </button>
                     </div>
                 </>

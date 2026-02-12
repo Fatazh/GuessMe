@@ -6,10 +6,10 @@ import { useRouter } from 'next/navigation';
 const PARTICIPANTS = Array.from({ length: 27 }, (_, i) => `Peserta ${i + 1}`);
 
 const GROUP_COLORS = [
-  { name: 'Tim Merah', color: '#ef4444', gradient: 'linear-gradient(135deg, #ef4444, #dc2626)' },
-  { name: 'Tim Biru', color: '#3b82f6', gradient: 'linear-gradient(135deg, #3b82f6, #2563eb)' },
-  { name: 'Tim Hijau', color: '#10b981', gradient: 'linear-gradient(135deg, #10b981, #059669)' },
-  { name: 'Tim Ungu', color: '#8b5cf6', gradient: 'linear-gradient(135deg, #8b5cf6, #7c3aed)' },
+  { name: 'Tim 1', color: '#ef4444', gradient: 'linear-gradient(135deg, #ef4444, #dc2626)' },
+  { name: 'Tim 2', color: '#3b82f6', gradient: 'linear-gradient(135deg, #3b82f6, #2563eb)' },
+  { name: 'Tim 3', color: '#10b981', gradient: 'linear-gradient(135deg, #10b981, #059669)' },
+  { name: 'Tim 4', color: '#8b5cf6', gradient: 'linear-gradient(135deg, #8b5cf6, #7c3aed)' },
 ];
 
 function divideIntoGroups(participants: string[]) {
