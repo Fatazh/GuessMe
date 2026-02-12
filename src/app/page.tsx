@@ -1,66 +1,102 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+'use client';
+
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+
+const PARTICIPANTS = Array.from({ length: 27 }, (_, i) => `Peserta ${i + 1}`);
+
+const GROUP_COLORS = [
+  { name: 'Tim Merah', color: '#ef4444', gradient: 'linear-gradient(135deg, #ef4444, #dc2626)' },
+  { name: 'Tim Biru', color: '#3b82f6', gradient: 'linear-gradient(135deg, #3b82f6, #2563eb)' },
+  { name: 'Tim Hijau', color: '#10b981', gradient: 'linear-gradient(135deg, #10b981, #059669)' },
+  { name: 'Tim Ungu', color: '#8b5cf6', gradient: 'linear-gradient(135deg, #8b5cf6, #7c3aed)' },
+];
+
+function divideIntoGroups(participants: string[]) {
+  const shuffled = [...participants].sort(() => Math.random() - 0.5);
+  const groups = GROUP_COLORS.map((g) => ({
+    ...g,
+    members: [] as string[],
+  }));
+  shuffled.forEach((name, i) => {
+    groups[i % 4].members.push(name);
+  });
+  return groups;
+}
 
 export default function Home() {
+  const router = useRouter();
+  const [timerSeconds, setTimerSeconds] = useState(60);
+  const [isStarting, setIsStarting] = useState(false);
+
+  const handleStart = () => {
+    setIsStarting(true);
+    const groups = divideIntoGroups(PARTICIPANTS);
+    const config = {
+      groups,
+      timerSeconds,
+    };
+    localStorage.setItem('gameConfig', JSON.stringify(config));
+    setTimeout(() => router.push('/game'), 500);
+  };
+
+  const formatTimer = (sec: number) => {
+    if (sec < 60) return `${sec} detik`;
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return s > 0 ? `${m} menit ${s} detik` : `${m} menit`;
+  };
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>To get started, edit the page.tsx file.</h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="setup-page">
+      <div className="game-header">
+        <h1 className="game-title">
+          <span className="title-line">TEBAK</span>
+          <span className="title-line accent">GAMBAR</span>
+        </h1>
+        <div className="title-sub">
+          <span className="badge">TEKNOLOGI</span>
+          <span>Game Seru untuk Semua!</span>
         </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+      </div>
+
+      <div className="setup-card glass-card">
+        {/* Timer */}
+        <div className="setup-section">
+          <h2>⏱️ Waktu per Giliran Kelompok</h2>
+          <div className="timer-selector">
+            <div className="timer-display">
+              {timerSeconds}
+              <span className="unit">detik</span>
+            </div>
+            <input
+              id="timer-slider"
+              type="range"
+              className="timer-slider"
+              min={30}
+              max={180}
+              step={15}
+              value={timerSeconds}
+              onChange={(e) => setTimerSeconds(Number(e.target.value))}
             />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            <div className="timer-labels">
+              <span>30 detik</span>
+              <span>{formatTimer(timerSeconds)}</span>
+              <span>3 menit</span>
+            </div>
+          </div>
         </div>
-      </main>
-    </div>
+
+        {/* Start */}
+        <button
+          id="start-game"
+          className="start-btn"
+          onClick={handleStart}
+          disabled={isStarting}
+        >
+          {isStarting ? '⏳ Memulai...' : '🚀 Mulai Bermain'}
+        </button>
+      </div>
+    </main>
   );
 }
